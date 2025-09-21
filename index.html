@@ -1,0 +1,854 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <!-- ===================== Quick Start (1–2 mins) =====================
+  1) Copy this entire file into index.html and open in your browser.
+  2) Use these temp creds on the Sign‑in screen:
+     Dispatcher  → Email: coreversallc@gmail.com • Passcode: 0417
+     Driver Mode → Email: jimmikendrick417@gmail.com • Password: 0444 
+  3) Optional: set ENV.WEBHOOK_URL to your Zapier/Make/webhook.site URL for notifications.
+  4) Data is stored in your browser via localStorage. Use Settings → Export/Import/Reset.
+  5) When ready for a real backend, flip ENV.BACKEND.enabled = true and wire the stubs.
+  -->
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CoreVersa Load Board — Single‑File App</title>
+  <meta name="description" content="CoreVersa Load Board: auth & roles, loads CRUD, offers, driver docs, audit trail, notifications, filters, pagination, dark mode, auto‑refresh, relevance search." />
+  <!-- Tailwind CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            versa: { 50:'#eefdf6',100:'#d6f7e7',200:'#aef0d1',300:'#7ee4b8',400:'#4fd6a0',500:'#22c58b',600:'#16a374',700:'#148162',800:'#126651',900:'#0f5343' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    *{scrollbar-width:thin}
+    .scroll-smooth{scroll-behavior:smooth}
+    .truncate-2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 dark:bg-slate-900 dark:text-slate-50 min-h-screen">
+  <!-- ========================= ENV / CONFIG ========================= -->
+  <script>
+    const ENV = {
+      ADMIN_EMAIL: 'coreversallc@gmail.com',
+      ADMIN_PASSCODE: '0417',
+      DRIVER_DEMO_EMAIL: 'jimmikendrick417@gmail.com',
+      DRIVER_DEMO_PASS: '0444',
+      WEBHOOK_URL: '', // e.g., 'https://hook.eu1.make.com/xxxxx'
+      EMAIL_TARGET: 'coreversallc@gmail.com',
+      PERSIST_KEY: 'coreversa_v1',
+      BACKEND: {
+        enabled: false,
+        async login({email, pass, role}){ return { ok:true, user:{id:'u_demo', email, role} } },
+        async listLoads(params){ return null },
+        async createLoad(load){ return null },
+        async updateLoad(load){ return null },
+        async deleteLoad(id){ return null },
+        async listOffers(params){ return null },
+        async createOffer(offer){ return null },
+        async updateOffer(offer){ return null },
+        async uploadDoc({file, meta}){ return { url: null } },
+      }
+    }
+  </script>
+
+  <!-- ========================= APP WRAPPER ========================= -->
+  <div id="app" class="min-h-screen flex flex-col">
+    <!-- Top Bar -->
+    <header class="bg-slate-900 text-white dark:bg-slate-800">
+      <div class="max-w-7xl mx-auto px-4 py-3 flex items-center gap-3">
+        <div class="h-9 w-9 rounded bg-versa-500 grid place-items-center font-bold">CV</div>
+        <div class="flex-1">
+          <h1 class="text-lg font-semibold leading-tight">CoreVersa Load Board</h1>
+          <p class="text-xs text-slate-300">Operate like software • Auth • Loads • Offers • Docs • Audit • Notifications</p>
+        </div>
+        <button id="themeToggle" class="text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded">Toggle Dark</button>
+        <div class="relative">
+          <button id="notifBtn" class="relative px-3 py-1.5 rounded bg-versa-600 hover:bg-versa-500 text-sm">
+            Notifications <span id="notifDot" class="hidden absolute -top-1 -right-1 h-2 w-2 rounded-full bg-red-400"></span>
+          </button>
+          <div id="notifPanel" class="hidden absolute right-0 mt-2 w-80 bg-white dark:bg-slate-800 shadow-lg rounded border border-slate-200 dark:border-slate-700 max-h-96 overflow-auto z-10">
+            <div class="p-3 text-sm font-semibold border-b border-slate-200 dark:border-slate-700">Recent Updates</div>
+            <div id="notifList" class="divide-y divide-slate-100 dark:divide-slate-700"></div>
+          </div>
+        </div>
+        <div id="userPill" class="ml-2 hidden text-xs bg-slate-700 px-2.5 py-1 rounded"></div>
+        <button id="logoutBtn" class="hidden ml-2 text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded">Logout</button>
+      </div>
+    </header>
+
+    <!-- Content -->
+    <main class="flex-1">
+      <!-- LOGIN VIEW -->
+      <section id="loginView" class="max-w-md mx-auto p-6">
+        <div class="bg-white dark:bg-slate-800 rounded-xl shadow p-6 space-y-4">
+          <h2 class="text-xl font-semibold">Sign in</h2>
+          <p class="text-sm text-slate-500 dark:text-slate-300">Choose your role and use the temporary credentials below. Replace later with real auth.</p>
+          <div class="grid grid-cols-2 gap-2 text-xs bg-slate-50 dark:bg-slate-900 p-3 rounded border border-slate-200 dark:border-slate-700">
+            <div>
+              <div class="font-semibold">Dispatcher</div>
+              <div>Email: <code class="select-all" id="tplAdminEmail"></code></div>
+              <div>Passcode: <code class="select-all" id="tplAdminPass"></code></div>
+            </div>
+            <div>
+              <div class="font-semibold">Driver (demo)</div>
+              <div>Email: <code class="select-all" id="tplDriverEmail"></code></div>
+              <div>Password: <code class="select-all" id="tplDriverPass"></code></div>
+            </div>
+          </div>
+          <form id="loginForm" class="space-y-3">
+            <div class="grid grid-cols-2 gap-3">
+              <label class="text-sm">Role
+                <select name="role" class="mt-1 w-full rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900">
+                  <option value="dispatcher">Dispatcher</option>
+                  <option value="driver">Driver</option>
+                </select>
+              </label>
+              <label class="text-sm">Email
+                <input name="email" type="email" required class="mt-1 w-full rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900" placeholder="you@example.com" />
+              </label>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <label class="text-sm">Password/Passcode
+                <input name="pass" type="password" required class="mt-1 w-full rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900" placeholder="••••••" />
+              </label>
+              <div class="flex items-end">
+                <button class="w-full bg-versa-600 hover:bg-versa-500 text-white rounded px-4 py-2">Sign in</button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <!-- APP VIEW -->
+      <section id="appView" class="hidden max-w-7xl mx-auto p-4">
+        <!-- Tabs -->
+        <div class="flex gap-2 flex-wrap mb-3">
+          <button data-tab="loads" class="tabBtn bg-slate-200 dark:bg-slate-700 px-3 py-1.5 rounded">Loads</button>
+          <button data-tab="offers" class="tabBtn bg-slate-200 dark:bg-slate-700 px-3 py-1.5 rounded">Offers</button>
+          <button data-tab="drivers" class="tabBtn bg-slate-200 dark:bg-slate-700 px-3 py-1.5 rounded">Drivers</button>
+          <button data-tab="audit" class="tabBtn bg-slate-200 dark:bg-slate-700 px-3 py-1.5 rounded">Audit Log</button>
+          <button data-tab="settings" class="tabBtn bg-slate-200 dark:bg-slate-700 px-3 py-1.5 rounded">Settings</button>
+        </div>
+
+        <!-- SEARCH / FILTER BAR w/ Auto‑refresh -->
+        <div id="searchBar" class="bg-white dark:bg-slate-800 rounded-xl shadow p-3 mb-4">
+          <div class="grid lg:grid-cols-12 md:grid-cols-8 grid-cols-1 gap-2 text-sm items-center">
+            <!-- Query -->
+            <input id="qText" class="lg:col-span-4 md:col-span-4 rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900" placeholder="Search cities, lanes, IDs…"/>
+            <!-- Relevance / Sort -->
+            <select id="qMode" class="lg:col-span-2 md:col-span-2 rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900">
+              <option value="relevance">Relevance</option>
+              <option value="date_desc">Date ↓</option>
+              <option value="date_asc">Date ↑</option>
+              <option value="rate_desc">Rate ↓</option>
+              <option value="rate_asc">Rate ↑</option>
+            </select>
+            <!-- Quick filters -->
+            <select id="qEquip" class="lg:col-span-2 md:col-span-2 rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900">
+              <option value="">Any Equipment</option>
+              <option>26ft Box</option>
+              <option>Sprinter</option>
+              <option>48' Dry Van</option>
+              <option>53' Dry Van</option>
+            </select>
+            <select id="qStatus" class="lg:col-span-2 md:col-span-2 rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900">
+              <option value="">Any Status</option>
+              <option>Open</option>
+              <option>Assigned</option>
+              <option>Covered</option>
+              <option>Closed</option>
+            </select>
+            <input id="qMaxMiles" type="number" min="0" class="lg:col-span-1 md:col-span-1 rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900" placeholder="Max mi"/>
+            <button id="qApply" class="lg:col-span-1 md:col-span-1 bg-slate-900 text-white dark:bg-slate-700 rounded">Apply</button>
+
+            <!-- Auto‑refresh controls -->
+            <label class="flex items-center gap-2 lg:col-span-2 md:col-span-2 whitespace-nowrap">
+              <input id="autoRefresh" type="checkbox" class="accent-versa-600"> Auto‑refresh
+            </label>
+            <select id="refreshSec" class="lg:col-span-1 md:col-span-1 rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900">
+              <option value="15">15</option>
+              <option value="30" selected>30</option>
+              <option value="60">60</option>
+              <option value="120">120</option>
+              <option value="300">300</option>
+            </select>
+            <span class="text-xs text-slate-500 lg:col-span-1 md:col-span-1">sec</span>
+            <button id="refreshNow" class="lg:col-span-2 md:col-span-2 px-3 py-1.5 rounded bg-slate-200 dark:bg-slate-700">⟳ Refresh now</button>
+
+            <!-- Timestamps -->
+            <div class="lg:col-span-12 md:col-span-8 text-xs text-slate-500 flex flex-wrap gap-4 mt-1">
+              <div>Next refresh: <span id="nextRefresh">—</span></div>
+              <div>Last updated: <span id="lastUpdated">—</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- LOADS TAB -->
+        <div id="tab-loads" class="tabContent hidden">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-lg font-semibold">Loads</h3>
+            <button id="btnNewLoad" class="role-dispatcher bg-versa-600 hover:bg-versa-500 text-white px-3 py-1.5 rounded hidden">New Load</button>
+          </div>
+          <!-- Table -->
+          <div class="bg-white dark:bg-slate-800 rounded-xl shadow overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="min-w-full text-sm">
+                <thead class="bg-slate-50 dark:bg-slate-900 text-slate-500">
+                  <tr>
+                    <th class="px-3 py-2 text-left">ID</th>
+                    <th class="px-3 py-2 text-left">Date</th>
+                    <th class="px-3 py-2 text-left">Origin → Dest</th>
+                    <th class="px-3 py-2 text-left">Equip</th>
+                    <th class="px-3 py-2 text-left">Miles</th>
+                    <th class="px-3 py-2 text-left">Rate</th>
+                    <th class="px-3 py-2 text-left">Status</th>
+                    <th class="px-3 py-2 text-left">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="loadsTbody" class="divide-y divide-slate-100 dark:divide-slate-700"></tbody>
+              </table>
+            </div>
+            <div class="flex justify-between items-center p-3 text-xs">
+              <div id="loadsCount"></div>
+              <div class="flex items-center gap-2">
+                <button id="prevPage" class="px-2 py-1 rounded bg-slate-200 dark:bg-slate-700">Prev</button>
+                <div id="pageInfo"></div>
+                <button id="nextPage" class="px-2 py-1 rounded bg-slate-200 dark:bg-slate-700">Next</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- OFFERS TAB -->
+        <div id="tab-offers" class="tabContent hidden">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-lg font-semibold">Offers</h3>
+          </div>
+          <div class="bg-white dark:bg-slate-800 rounded-xl shadow overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="min-w-full text-sm">
+                <thead class="bg-slate-50 dark:bg-slate-900 text-slate-500">
+                  <tr>
+                    <th class="px-3 py-2 text-left">Offer ID</th>
+                    <th class="px-3 py-2 text-left">Load</th>
+                    <th class="px-3 py-2 text-left">Driver</th>
+                    <th class="px-3 py-2 text-left">Rate</th>
+                    <th class="px-3 py-2 text-left">Status</th>
+                    <th class="px-3 py-2 text-left">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="offersTbody" class="divide-y divide-slate-100 dark:divide-slate-700"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- DRIVERS TAB -->
+        <div id="tab-drivers" class="tabContent hidden">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-lg font-semibold">Drivers</h3>
+            <button id="btnNewDriver" class="role-dispatcher bg-versa-600 hover:bg-versa-500 text-white px-3 py-1.5 rounded hidden">New Driver</button>
+          </div>
+          <div class="bg-white dark:bg-slate-800 rounded-xl shadow p-4 space-y-3" id="driversList"></div>
+        </div>
+
+        <!-- AUDIT TAB -->
+        <div id="tab-audit" class="tabContent hidden">
+          <h3 class="text-lg font-semibold mb-2">Audit Trail</h3>
+          <div class="bg-white dark:bg-slate-800 rounded-xl shadow divide-y divide-slate-100 dark:divide-slate-700" id="auditList"></div>
+        </div>
+
+        <!-- SETTINGS TAB -->
+        <div id="tab-settings" class="tabContent hidden">
+          <h3 class="text-lg font-semibold mb-3">Settings & Integrations</h3>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="bg-white dark:bg-slate-800 rounded-xl shadow p-4 space-y-2">
+              <div class="text-sm font-semibold">Notification Webhook</div>
+              <input id="cfgWebhook" class="w-full rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900" placeholder="https://…" />
+              <button id="saveWebhook" class="bg-slate-900 text-white dark:bg-slate-700 rounded px-3 py-1.5 text-sm">Save</button>
+              <p class="text-xs text-slate-500">Tip: Use Zapier/Make/Webhook.site to receive POSTs for new offers etc.</p>
+            </div>
+            <div class="bg-white dark:bg-slate-800 rounded-xl shadow p-4 space-y-2">
+              <div class="text-sm font-semibold">Export / Import</div>
+              <div class="flex flex-wrap gap-2">
+                <button id="btnExport" class="px-3 py-1.5 rounded bg-slate-200 dark:bg-slate-700 text-sm">Export JSON</button>
+                <label class="px-3 py-1.5 rounded bg-slate-200 dark:bg-slate-700 text-sm cursor-pointer">Import JSON
+                  <input id="importJson" type="file" accept="application/json" class="hidden" />
+                </label>
+                <button id="btnReset" class="px-3 py-1.5 rounded bg-red-600 text-white text-sm">Factory Reset</button>
+              </div>
+              <p class="text-xs text-slate-500">For demo data portability. Switch to a backend when ready.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- FOOTER -->
+    <footer class="text-center text-xs text-slate-500 py-6">
+      © <span id="year"></span> CoreVersa LLC • Single‑file demo. Replace storage with real backend when ready.
+    </footer>
+  </div>
+
+  <!-- ========================= DIALOGS / MODALS ========================= -->
+  <template id="modalTpl">
+    <div class="fixed inset-0 bg-black/40 grid place-items-center z-20">
+      <div class="bg-white dark:bg-slate-800 rounded-xl shadow-xl w-[min(700px,92vw)]">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-700">
+          <div class="font-semibold" data-title>Modal</div>
+          <button data-close class="text-slate-500 hover:text-slate-700">✕</button>
+        </div>
+        <div class="p-4" data-body></div>
+      </div>
+    </div>
+  </template>
+
+  <!-- ========================= TEMPLATES ========================= -->
+  <template id="loadRowTpl">
+    <tr>
+      <td class="px-3 py-2 font-mono text-xs" data-id>—</td>
+      <td class="px-3 py-2" data-date>—</td>
+      <td class="px-3 py-2" data-route>—</td>
+      <td class="px-3 py-2" data-equip>—</td>
+      <td class="px-3 py-2" data-miles>—</td>
+      <td class="px-3 py-2" data-rate>—</td>
+      <td class="px-3 py-2" data-status>—</td>
+      <td class="px-3 py-2">
+        <div class="flex gap-2">
+          <button class="px-2 py-1 rounded bg-slate-200 dark:bg-slate-700 text-xs" data-view>View</button>
+          <button class="px-2 py-1 rounded bg-versa-600 text-white text-xs role-dispatcher hidden" data-edit>Edit</button>
+          <button class="px-2 py-1 rounded bg-red-600 text-white text-xs role-dispatcher hidden" data-del>Delete</button>
+          <button class="px-2 py-1 rounded bg-versa-600 text-white text-xs role-driver hidden" data-offer>Offer</button>
+        </div>
+      </td>
+    </tr>
+  </template>
+
+  <template id="driverCardTpl">
+    <div class="p-4 rounded border border-slate-200 dark:border-slate-700">
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="font-semibold" data-name>—</div>
+          <div class="text-xs text-slate-500" data-email>—</div>
+          <div class="text-xs mt-1" data-meta>—</div>
+        </div>
+        <div class="flex gap-2">
+          <button class="px-2 py-1 rounded bg-slate-200 dark:bg-slate-700 text-xs role-dispatcher hidden" data-edit>Edit</button>
+          <label class="px-2 py-1 rounded bg-versa-600 text-white text-xs cursor-pointer role-driver hidden">
+            Upload Doc
+            <input type="file" accept="image/*,application/pdf" class="hidden" data-doc>
+          </label>
+        </div>
+      </div>
+      <div class="mt-2 text-xs" data-docs></div>
+    </div>
+  </template>
+
+  <!-- ========================= APP LOGIC ========================= -->
+  <script>
+  (function(){
+    // ---------- Utilities ----------
+    const $ = sel => document.querySelector(sel);
+    const $$ = sel => Array.from(document.querySelectorAll(sel));
+    const fmt = new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'});
+    const uid = (p='id') => p + Math.random().toString(36).slice(2,9);
+    const nowISO = () => new Date().toISOString();
+
+    const persist = {
+      get(){ try{ return JSON.parse(localStorage.getItem(ENV.PERSIST_KEY) || '{}') } catch{ return {} } },
+      set(data){ localStorage.setItem(ENV.PERSIST_KEY, JSON.stringify(data)) },
+      patch(patch){ const cur=this.get(); this.set({...cur, ...patch}) }
+    }
+
+    function toast(msg){
+      const n = document.createElement('div');
+      n.className = 'fixed bottom-4 right-4 bg-slate-900 text-white dark:bg-slate-700 rounded px-3 py-2 text-sm shadow z-30';
+      n.textContent = msg; document.body.appendChild(n);
+      setTimeout(()=>{ n.remove() }, 2600)
+    }
+
+    function notify({title, detail}){
+      const list = $('#notifList');
+      const row = document.createElement('div');
+      row.className = 'p-3 text-sm';
+      row.innerHTML = `<div class="font-medium">${title}</div><div class="text-slate-500 text-xs">${detail || ''}</div>`;
+      list.prepend(row);
+      $('#notifDot').classList.remove('hidden');
+      if(ENV.WEBHOOK_URL){
+        fetch(ENV.WEBHOOK_URL,{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({title, detail, ts: nowISO()})}).catch(()=>{});
+      }
+    }
+
+    function audit(user, action, payload){
+      const data = persist.get();
+      const rec = { id: uid('audit_'), ts: nowISO(), user, action, payload };
+      data.audit = data.audit || [];
+      data.audit.unshift(rec);
+      persist.patch({audit: data.audit});
+      renderAudit();
+    }
+
+    // ---------- State ----------
+    const state = {
+      user: null,
+      tab: 'loads',
+      page: 1,
+      pageSize: 8,
+      q: { text:'', equip:'', status:'', maxMiles:'', mode:'relevance' },
+      autoRefresh: false,
+      refreshSec: 30,
+      _refreshTimer: null,
+      _tickTimer: null,
+      _nextAt: null,
+      lastUpdated: null
+    }
+
+    // ---------- Auth ----------
+    function applyRoleVisibility(){
+      $$('.role-dispatcher').forEach(el=>{ el.classList.toggle('hidden', state.user?.role !== 'dispatcher') });
+      $$('.role-driver').forEach(el=>{ el.classList.toggle('hidden', state.user?.role !== 'driver') });
+      $('#userPill').textContent = state.user ? `${state.user.role.toUpperCase()} • ${state.user.email}` : '';
+      $('#userPill').classList.toggle('hidden', !state.user);
+      $('#logoutBtn').classList.toggle('hidden', !state.user);
+    }
+
+    async function login({email, pass, role}){
+      if(ENV.BACKEND.enabled){
+        const res = await ENV.BACKEND.login({email, pass, role});
+        if(!res?.ok) throw new Error('Login failed');
+        state.user = res.user;
+      } else {
+        const ok = (role==='dispatcher' && email===ENV.ADMIN_EMAIL && pass===ENV.ADMIN_PASSCODE) ||
+                   (role==='driver' && email===ENV.DRIVER_DEMO_EMAIL && pass===ENV.DRIVER_DEMO_PASS);
+        if(!ok) throw new Error('Invalid credentials');
+        state.user = { id: uid('u_'), email, role };
+      }
+      persist.patch({ lastUser: state.user });
+      $('#loginView').classList.add('hidden');
+      $('#appView').classList.remove('hidden');
+      applyRoleVisibility();
+      switchTab('loads');
+      audit(state.user.email,'login', {role: state.user.role});
+      notify({title:'Signed in', detail:`${state.user.role} • ${state.user.email}`});
+    }
+
+    function logout(){ state.user=null; persist.patch({lastUser:null}); location.reload() }
+
+    // ---------- Data (Loads / Offers / Drivers) ----------
+    function seedIfEmpty(){
+      const data = persist.get();
+      if(data.seeded) return;
+      const loads = [
+        {id: uid('L_'), date: new Date(Date.now()+864e5).toISOString().slice(0,10), origin:'Branchburg, NJ', dest:'Jersey City, NJ', equip:'26ft Box', miles:41, rate:250, status:'Open', notes:'One pickup, one drop'},
+        {id: uid('L_'), date: new Date(Date.now()+2*864e5).toISOString().slice(0,10), origin:'Danbury, CT', dest:'Harrisville, RI', equip:'26ft Box', miles:117, rate:250, status:'Open', notes:'Light 5,250 lbs'},
+        {id: uid('L_'), date: new Date().toISOString().slice(0,10), origin:'San Diego, CA', dest:'Phoenix, AZ', equip:"53' Dry Van", miles:355, rate:900, status:'Open', notes:'Dock to dock'},
+      ];
+      const offers = [];
+      const drivers = [
+        {id: uid('D_'), name:'Nana B O‑Darko', email:'nana@example.com', equip:'26ft Box', willingMiles:200, location:'Waterbury, CT', notes:'Liftgate, pallet jack', docs:[]},
+        {id: uid('D_'), name:'Frank B Roberto', email:'frank@example.com', equip:'53' Dry Van', willingMiles:1200, location:'Pittsburgh, PA', notes:'OTR okay', docs:[]}
+      ];
+      persist.patch({ loads, offers, drivers, seeded:true });
+    }
+
+    function getData(){ seedIfEmpty(); return persist.get() }
+
+    // ---------- Rendering ----------
+    function switchTab(t){
+      state.tab=t;
+      $$('.tabContent').forEach(el=>el.classList.add('hidden'));
+      $(`#tab-${t}`).classList.remove('hidden');
+      $$('.tabBtn').forEach(b=>b.classList.toggle('bg-versa-600', b.dataset.tab===t));
+      $$('.tabBtn').forEach(b=>b.classList.toggle('text-white', b.dataset.tab===t));
+      if(t==='loads') renderLoads();
+      if(t==='offers') renderOffers();
+      if(t==='drivers') renderDrivers();
+      if(t==='audit') renderAudit();
+      if(t==='settings') renderSettings();
+    }
+
+    function renderLoads(){
+      const body = $('#loadsTbody'); body.innerHTML='';
+      const {loads=[]} = getData();
+      // Filters
+      let rows = loads.filter(l=>{
+        const hitText = !state.q.text || (l.origin+' '+l.dest+' '+(l.notes||'')+' '+l.id).toLowerCase().includes(state.q.text.toLowerCase());
+        const hitEquip = !state.q.equip || l.equip===state.q.equip;
+        const hitStatus = !state.q.status || l.status===state.q.status;
+        const hitMiles = !state.q.maxMiles || Number(l.miles)<=Number(state.q.maxMiles);
+        return hitText && hitEquip && hitStatus && hitMiles;
+      });
+      // Sort / Relevance
+      if(state.q.mode==='relevance' && state.q.text){
+        const q = state.q.text.toLowerCase();
+        const score = l=>{
+          const hay = `${l.origin} ${l.dest} ${l.equip} ${l.status} ${l.id} ${l.notes||''}`.toLowerCase();
+          const occ = hay.split(q).length-1; // term occurrences
+          const recent = (Date.now() - new Date(l.date).getTime());
+          const recencyBoost = Math.max(0, (90*864e5 - recent)) / (90*864e5); // 0..1 in last 90d
+          return occ*10 + recencyBoost;
+        }
+        rows.sort((a,b)=> score(b)-score(a));
+      } else {
+        const [field, dir] = state.q.mode.split('_');
+        rows.sort((a,b)=>{
+          let va, vb; if(field==='date'){ va=a.date; vb=b.date } else if(field==='rate'){ va=a.rate; vb=b.rate } else { va=a.date; vb=b.date }
+          return dir==='asc' ? (va>vb?1:-1) : (va<vb?1:-1);
+        });
+      }
+      // Pagination
+      const total = rows.length; const pages = Math.max(1, Math.ceil(total/state.pageSize)); state.page = Math.min(state.page, pages);
+      const start = (state.page-1)*state.pageSize; const pageRows = rows.slice(start, start+state.pageSize);
+      $('#loadsCount').textContent = `${total} load${total!==1?'s':''}`;
+      $('#pageInfo').textContent = `Page ${state.page} / ${pages}`;
+
+      pageRows.forEach(l=>{
+        const tr = document.importNode($('#loadRowTpl').content,true);
+        tr.querySelector('[data-id]').textContent = l.id;
+        tr.querySelector('[data-date]').textContent = l.date;
+        tr.querySelector('[data-route]').textContent = `${l.origin} → ${l.dest}`;
+        tr.querySelector('[data-equip]').textContent = l.equip;
+        tr.querySelector('[data-miles]').textContent = String(l.miles);
+        tr.querySelector('[data-rate]').textContent = fmt.format(l.rate);
+        tr.querySelector('[data-status]').textContent = l.status;
+        tr.querySelector('[data-view]').onclick = ()=> openLoadView(l);
+        tr.querySelector('[data-edit]').onclick = ()=> openLoadForm(l);
+        tr.querySelector('[data-del]').onclick = ()=> deleteLoad(l.id);
+        tr.querySelector('[data-offer]').onclick = ()=> openOfferForm(l);
+        body.appendChild(tr);
+      });
+    }
+
+    function renderOffers(){
+      const body = $('#offersTbody'); body.innerHTML='';
+      const {offers=[], loads=[]} = getData();
+      offers.forEach(o=>{
+        const l = loads.find(x=>x.id===o.loadId);
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="px-3 py-2 font-mono text-xs">${o.id}</td>
+          <td class="px-3 py-2">${l ? `${l.origin} → ${l.dest}` : '—'}</td>
+          <td class="px-3 py-2">${o.driverEmail}</td>
+          <td class="px-3 py-2">${fmt.format(o.rate)}</td>
+          <td class="px-3 py-2">${o.status}</td>
+          <td class="px-3 py-2">
+            <div class="flex gap-2">
+              ${state.user?.role==='dispatcher' ? `
+                <button class="px-2 py-1 rounded bg-versa-600 text-white text-xs" data-accept>Accept</button>
+                <button class="px-2 py-1 rounded bg-red-600 text-white text-xs" data-decline>Decline</button>
+                <button class="px-2 py-1 rounded bg-slate-200 dark:bg-slate-700 text-xs" data-counter>Counter</button>
+              ` : ''}
+            </div>
+          </td>`;
+        if(state.user?.role==='dispatcher'){
+          tr.querySelector('[data-accept]').onclick = ()=> updateOfferStatus(o.id,'Accepted');
+          tr.querySelector('[data-decline]').onclick = ()=> updateOfferStatus(o.id,'Declined');
+          tr.querySelector('[data-counter]').onclick = ()=> counterOffer(o.id);
+        }
+        body.appendChild(tr);
+      });
+    }
+
+    function renderDrivers(){
+      const wrap = $('#driversList'); wrap.innerHTML='';
+      const {drivers=[]} = getData();
+      drivers.forEach(d=>{
+        const card = document.importNode($('#driverCardTpl').content,true);
+        card.querySelector('[data-name]').textContent = d.name;
+        card.querySelector('[data-email]').textContent = d.email;
+        card.querySelector('[data-meta]').textContent = `${d.equip} • ${d.location} • ${d.willingMiles}mi radius`;
+        const holder = card.querySelector('[data-docs]');
+        holder.innerHTML = (d.docs||[]).map(x=>`<div class='mt-1'>📄 <a href='${x.url}' target='_blank' class='underline'>${x.name}</a> <span class='text-slate-500'>(${x.type||'file'})</span></div>`).join('') || '<span class="text-slate-500">No docs yet.</span>';
+        card.querySelector('[data-edit]').onclick = ()=> openDriverForm(d);
+        const fileInput = card.querySelector('[data-doc]');
+        fileInput.onchange = (ev)=>{
+          if(!ev.target.files?.length) return;
+          const file = ev.target.files[0];
+          const url = URL.createObjectURL(file);
+          d.docs = d.docs || []; d.docs.push({ name:file.name, type:file.type, url, ts: nowISO() });
+          const data = getData();
+          const idx = data.drivers.findIndex(x=>x.id===d.id);
+          data.drivers[idx] = d; persist.set(data);
+          audit(state.user?.email||'guest','driver_doc_upload',{driver:d.email, file:file.name});
+          notify({title:'Driver Doc Uploaded', detail:`${d.email} • ${file.name}`});
+          renderDrivers();
+        }
+        wrap.appendChild(card);
+      });
+    }
+
+    function renderAudit(){
+      const {audit=[]} = getData();
+      const wrap = $('#auditList'); wrap.innerHTML='';
+      audit.forEach(a=>{
+        const row = document.createElement('div');
+        row.className = 'p-3 text-sm flex items-start gap-3';
+        row.innerHTML = `<div class='font-mono text-xs text-slate-500 w-40 shrink-0'>${a.ts}</div>
+                         <div><div class='font-medium'>${a.action}</div>
+                         <div class='text-xs text-slate-500'>${a.user}</div>
+                         <pre class='text-xs whitespace-pre-wrap mt-1 bg-slate-50 dark:bg-slate-900 p-2 rounded'>${JSON.stringify(a.payload,null,2)}</pre></div>`;
+        wrap.appendChild(row);
+      });
+    }
+
+    function renderSettings(){ $('#cfgWebhook').value = ENV.WEBHOOK_URL || '' }
+
+    // ---------- Modals ----------
+    function openModal({title, body}){
+      const t = document.importNode($('#modalTpl').content,true);
+      t.querySelector('[data-title]').textContent = title;
+      t.querySelector('[data-body]').append(body);
+      const root = t.firstElementChild; document.body.appendChild(root);
+      t.querySelector('[data-close]').onclick = ()=> root.remove();
+      return { close: ()=> root.remove() }
+    }
+
+    // ---------- Forms (Loads) ----------
+    function openLoadForm(load){
+      if(state.user?.role!=='dispatcher'){ return toast('Dispatcher only') }
+      const isEdit = !!load;
+      const frm = document.createElement('form');
+      frm.className = 'grid md:grid-cols-2 gap-3 text-sm';
+      frm.innerHTML = `
+        <label>Pickup Date<input name='date' type='date' class='mt-1 w-full rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900' required value='${load?.date||''}'></label>
+        <label>Equipment<select name='equip' class='mt-1 w-full rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900'>
+          <option ${load?.equip==='26ft Box'?'selected':''}>26ft Box</option>
+          <option ${load?.equip==='Sprinter'?'selected':''}>Sprinter</option>
+          <option ${load?.equip==="48' Dry Van"?'selected':''}>48' Dry Van</option>
+          <option ${load?.equip==="53' Dry Van"?'selected':''}>53' Dry Van</option>
+        </select></label>
+        <label>Origin<input name='origin' class='mt-1 w-full rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900' required value='${load?.origin||''}'></label>
+        <label>Destination<input name='dest' class='mt-1 w-full rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900' required value='${load?.dest||''}'></label>
+        <label>Miles<input name='miles' type='number' min='0' class='mt-1 w-full rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900' required value='${load?.miles||''}'></label>
+        <label>Rate (USD)<input name='rate' type='number' min='0' class='mt-1 w-full rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900' required value='${load?.rate||''}'></label>
+        <label class='md:col-span-2'>Notes<textarea name='notes' rows='3' class='mt-1 w-full rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900'>${load?.notes||''}</textarea></label>
+        <div class='md:col-span-2 flex justify-end gap-2'>
+          ${isEdit ? `<button type='button' data-del class='px-3 py-1.5 rounded bg-red-600 text-white'>Delete</button>`:''}
+          <button class='px-3 py-1.5 rounded bg-versa-600 text-white'>${isEdit?'Save':'Create'}</button>
+        </div>`
+      const { close } = openModal({title: isEdit?`Edit Load ${load.id}`:'New Load', body: frm});
+      frm.onsubmit = (e)=>{
+        e.preventDefault();
+        const f = new FormData(frm);
+        const rec = {
+          id: load?.id || uid('L_'),
+          date: f.get('date')||new Date().toISOString().slice(0,10),
+          equip: f.get('equip'), origin: f.get('origin'), dest: f.get('dest'),
+          miles: Number(f.get('miles')||0), rate: Number(f.get('rate')||0),
+          status: load?.status || 'Open', notes: f.get('notes')||''
+        };
+        const data = getData();
+        if(isEdit){
+          const i = data.loads.findIndex(x=>x.id===load.id); data.loads[i] = rec;
+          audit(state.user.email,'load_update', rec);
+        } else {
+          data.loads.unshift(rec);
+          audit(state.user.email,'load_create', rec);
+        }
+        persist.set(data); renderLoads(); close();
+        state.lastUpdated = Date.now(); setTimeLabels();
+        notify({title: isEdit?'Load updated':'Load created', detail:`${rec.origin} → ${rec.dest} • ${fmt.format(rec.rate)}`});
+      }
+      if(isEdit){
+        frm.querySelector('[data-del]').onclick = ()=>{ deleteLoad(load.id); close() }
+      }
+    }
+
+    function openLoadView(l){
+      const box = document.createElement('div');
+      box.className = 'space-y-2 text-sm';
+      box.innerHTML = `
+        <div class='font-semibold'>${l.origin} → ${l.dest}</div>
+        <div class='text-slate-500'>${l.date} • ${l.equip} • ${l.miles} mi • ${fmt.format(l.rate)}</div>
+        <div class='text-slate-500'>Status: <span class='font-medium'>${l.status}</span></div>
+        <div class='text-slate-500 whitespace-pre-wrap'>${l.notes||''}</div>
+        <div class='flex gap-2 pt-2'>
+          ${state.user?.role==='dispatcher'?`<button id='lvEdit' class='px-3 py-1.5 rounded bg-versa-600 text-white'>Edit</button>`:''}
+          ${state.user?.role==='driver'?`<button id='lvOffer' class='px-3 py-1.5 rounded bg-versa-600 text-white'>Offer</button>`:''}
+        </div>`
+      const { close } = openModal({title:`Load ${l.id}`, body: box});
+      const e = box.querySelector('#lvEdit'); if(e) e.onclick=()=>{ close(); openLoadForm(l) }
+      const o = box.querySelector('#lvOffer'); if(o) o.onclick=()=>{ close(); openOfferForm(l) }
+    }
+
+    function deleteLoad(id){
+      const data = getData();
+      const idx = data.loads.findIndex(x=>x.id===id);
+      if(idx>-1){
+        const rec = data.loads[idx];
+        data.loads.splice(idx,1); persist.set(data);
+        audit(state.user.email,'load_delete', {id});
+        renderLoads();
+        state.lastUpdated = Date.now(); setTimeLabels();
+        notify({title:'Load deleted', detail:`${rec.origin} → ${rec.dest}`});
+      }
+    }
+
+    // ---------- Offers ----------
+    function openOfferForm(load){
+      if(state.user?.role!=='driver'){ return toast('Driver only') }
+      const frm = document.createElement('form');
+      frm.className = 'grid gap-3 text-sm';
+      frm.innerHTML = `
+        <div class='text-slate-500'>${load.origin} → ${load.dest} • ${load.date}</div>
+        <label>My Offer Rate (USD)<input name='rate' type='number' min='0' class='mt-1 w-full rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900' required></label>
+        <label>Note to Dispatcher<textarea name='note' rows='3' class='mt-1 w-full rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900' placeholder='Timing, equipment, questions…'></textarea></label>
+        <div class='flex justify-end gap-2'>
+          <button class='px-3 py-1.5 rounded bg-versa-600 text-white'>Submit Offer</button>
+        </div>`
+      const { close } = openModal({title:`Offer for ${load.id}`, body: frm});
+      frm.onsubmit = (e)=>{
+        e.preventDefault();
+        const f = new FormData(frm);
+        const o = {
+          id: uid('O_'), loadId: load.id, driverEmail: state.user.email,
+          rate: Number(f.get('rate')||0), note: f.get('note')||'', status:'Pending', ts: nowISO()
+        }
+        const data = getData(); data.offers.unshift(o); persist.set(data);
+        audit(state.user.email,'offer_submit', o);
+        state.lastUpdated = Date.now(); setTimeLabels();
+        notify({title:'New Offer Submitted', detail:`${o.driverEmail} • ${fmt.format(o.rate)} • ${load.origin} → ${load.dest}`});
+        close(); renderOffers();
+      }
+    }
+
+    function updateOfferStatus(id, status){
+      const data = getData();
+      const i = data.offers.findIndex(x=>x.id===id);
+      if(i>-1){
+        data.offers[i].status = status; persist.set(data);
+        audit(state.user.email,'offer_status', {id, status});
+        state.lastUpdated = Date.now(); setTimeLabels();
+        notify({title:`Offer ${status}`, detail:`${data.offers[i].driverEmail} • ${fmt.format(data.offers[i].rate)}`});
+        renderOffers();
+      }
+    }
+
+    function counterOffer(id){
+      const data = getData();
+      const o = data.offers.find(x=>x.id===id); if(!o) return;
+      const frm = document.createElement('form');
+      frm.className = 'grid gap-3 text-sm';
+      frm.innerHTML = `
+        <div class='text-slate-500'>Driver: ${o.driverEmail}</div>
+        <label>Counter Rate (USD)<input name='rate' type='number' min='0' class='mt-1 w-full rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900' value='${o.rate}' required></label>
+        <label>Message<textarea name='msg' rows='3' class='mt-1 w-full rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900' placeholder='Notes to driver…'></textarea></label>
+        <div class='flex justify-end gap-2'>
+          <button class='px-3 py-1.5 rounded bg-versa-600 text-white'>Send Counter</button>
+        </div>`
+      const { close } = openModal({title:`Counter Offer ${o.id}`, body: frm});
+      frm.onsubmit = (e)=>{
+        e.preventDefault();
+        const f = new FormData(frm);
+        o.counter = { rate: Number(f.get('rate')||o.rate), msg: f.get('msg')||'' };
+        o.status = 'Countered'; persist.set(data);
+        audit(state.user.email,'offer_counter', {id, ...o.counter});
+        state.lastUpdated = Date.now(); setTimeLabels();
+        notify({title:'Counter Offer Sent', detail:`${o.driverEmail} • ${fmt.format(o.counter.rate)}`});
+        close(); renderOffers();
+      }
+    }
+
+    // ---------- Auto‑refresh ----------
+    function setTimeLabels(){
+      $('#lastUpdated').textContent = state.lastUpdated ? new Date(state.lastUpdated).toLocaleTimeString() : '—';
+      if(state._nextAt){
+        const s = Math.max(0, Math.round((state._nextAt - Date.now())/1000));
+        $('#nextRefresh').textContent = s ? `${s}s` : 'now';
+      } else { $('#nextRefresh').textContent = '—' }
+    }
+    function clearRefresh(){ if(state._refreshTimer){ clearTimeout(state._refreshTimer); state._refreshTimer=null } if(state._tickTimer){ clearInterval(state._tickTimer); state._tickTimer=null } state._nextAt=null; setTimeLabels() }
+    function scheduleRefresh(){
+      clearRefresh();
+      if(!state.autoRefresh) return;
+      const delay = state.refreshSec*1000;
+      state._nextAt = Date.now()+delay;
+      state._tickTimer = setInterval(setTimeLabels, 500);
+      state._refreshTimer = setTimeout(()=>{ doRefresh(); scheduleRefresh() }, delay);
+      setTimeLabels();
+    }
+    function doRefresh(){ renderLoads(); renderOffers(); renderDrivers(); state.lastUpdated = Date.now(); setTimeLabels(); audit(state.user?state.user.email:'guest','refresh', {auto: state.autoRefresh}); }
+
+    // ---------- Settings / Export / Import ----------
+    function bindSettings(){
+      $('#saveWebhook').onclick = ()=>{ ENV.WEBHOOK_URL = $('#cfgWebhook').value.trim(); toast('Webhook saved (in-memory).'); };
+      $('#btnExport').onclick = ()=>{
+        const data = getData(); const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `coreversa_export_${Date.now()}.json`; a.click(); URL.revokeObjectURL(a.href);
+      }
+      $('#importJson').onchange = (e)=>{
+        const file = e.target.files?.[0]; if(!file) return;
+        const rd = new FileReader(); rd.onload = ()=>{ try{ const obj = JSON.parse(rd.result); persist.set(obj); toast('Import ok'); doRefresh(); } catch{ toast('Invalid JSON') } }; rd.readAsText(file);
+      }
+      $('#btnReset').onclick = ()=>{ if(confirm('Reset demo data?')){ localStorage.removeItem(ENV.PERSIST_KEY); seedIfEmpty(); toast('Factory reset complete'); doRefresh(); } }
+    }
+
+    // ---------- Notif / Theme / Tabs ----------
+    function bindChrome(){
+      $('#year').textContent = new Date().getFullYear();
+      $('#themeToggle').onclick = ()=>{ document.documentElement.classList.toggle('dark') };
+      $('#notifBtn').onclick = ()=>{ $('#notifPanel').classList.toggle('hidden'); $('#notifDot').classList.add('hidden'); };
+      $$('.tabBtn').forEach(b=> b.onclick = ()=> switchTab(b.dataset.tab));
+      $('#logoutBtn').onclick = logout;
+    }
+
+    // ---------- Filters / Pagination ----------
+    function bindSearch(){
+      $('#qApply').onclick = ()=>{
+        state.q.text = $('#qText').value.trim();
+        state.q.equip = $('#qEquip').value; state.q.status = $('#qStatus').value;
+        state.q.mode = $('#qMode').value; state.q.maxMiles = $('#qMaxMiles').value;
+        state.page = 1; renderLoads();
+      }
+      $('#prevPage').onclick = ()=>{ if(state.page>1){ state.page--; renderLoads() } }
+      $('#nextPage').onclick = ()=>{ state.page++; renderLoads() }
+      // refresh controls
+      $('#autoRefresh').onchange = ()=>{ state.autoRefresh = $('#autoRefresh').checked; scheduleRefresh() }
+      $('#refreshSec').onchange = ()=>{ state.refreshSec = Number($('#refreshSec').value||30); scheduleRefresh() }
+      $('#refreshNow').onclick = ()=>{ doRefresh(); scheduleRefresh() }
+    }
+
+    // ---------- Login bind ----------
+    function bindLogin(){
+      // Show temp creds
+      $('#tplAdminEmail').textContent = ENV.ADMIN_EMAIL; $('#tplAdminPass').textContent = ENV.ADMIN_PASSCODE;
+      $('#tplDriverEmail').textContent = ENV.DRIVER_DEMO_EMAIL; $('#tplDriverPass').textContent = ENV.DRIVER_DEMO_PASS;
+      // Auto‑fill role creds on select for convenience
+      const frm = $('#loginForm');
+      const roleSel = frm.querySelector('select[name="role"]');
+      const emailInp = frm.querySelector('input[name="email"]');
+      const passInp = frm.querySelector('input[name="pass"]');
+      roleSel.onchange = ()=>{
+        if(roleSel.value==='dispatcher'){ emailInp.value = ENV.ADMIN_EMAIL; passInp.value = ENV.ADMIN_PASSCODE }
+        else { emailInp.value = ENV.DRIVER_DEMO_EMAIL; passInp.value = ENV.DRIVER_DEMO_PASS }
+      };
+      frm.onsubmit = (e)=>{ e.preventDefault(); const f = new FormData(frm); login({ email: f.get('email').trim(), pass: f.get('pass'), role: f.get('role') }) .catch(err=> toast(err.message||'Login failed')) }
+    }
+
+    // ---------- Boot ----------
+    function boot(){
+      bindChrome(); bindSettings(); bindSearch(); bindLogin(); seedIfEmpty();
+      // defaults
+      $('#refreshSec').value = String(state.refreshSec);
+      $('#autoRefresh').checked = state.autoRefresh;
+      state.lastUpdated = Date.now(); setTimeLabels();
+      const last = persist.get().lastUser; if(last){
+        $('#loginForm').querySelector('select[name="role"]').value = last.role;
+        $('#loginForm').querySelector('input[name="email"]').value = last.role==='dispatcher'?ENV.ADMIN_EMAIL:ENV.DRIVER_DEMO_EMAIL;
+        $('#loginForm').querySelector('input[name="pass"]').value = last.role==='dispatcher'?ENV.ADMIN_PASSCODE:ENV.DRIVER_DEMO_PASS;
+      }
+    }
+    document.addEventListener('DOMContentLoaded', boot);
+  })();
+  </script>
+</body>
+</html>
